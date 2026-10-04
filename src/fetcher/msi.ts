@@ -1,19 +1,15 @@
-/**
- * MSI BIOS fetcher.
- *
- * Strategy:
- *   1. Derive a URL slug from the board candidate string.
- *   2. Validate the board exists by hitting the MSI support page.
- *   3. Try the internal JSON API first; fall back to HTML scraping if it fails.
- *   4. Return the latest BIOS zip URL + file name.
- */
+/** fetch the latest MSI BIOS entry */
 
 import { parse as parseHtml } from "node-html-parser";
 import type { BiosEntry, FetchResult } from "../types.js";
 
 const MSI_BASE = "https://www.msi.com";
 
-/** MSI blocks bot-looking UAs with 403 — use a normal browser UA. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** use a browser user agent because MSI may block automated requests */
 const BROWSER_HEADERS: Record<string, string> = {
   "User-Agent":
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
@@ -22,10 +18,7 @@ const BROWSER_HEADERS: Record<string, string> = {
   Referer: "https://www.msi.com/",
 };
 
-/**
- * Convert a board candidate string to an MSI URL slug.
- * e.g. "B450M MORTAR MAX (MS-7B84)" → "B450M-MORTAR-MAX"
- */
+/** convert a board name to an MSI URL slug */
 export function toMsiSlug(candidate: string): string {
   return candidate
     .replace(/\(.*?\)/g, "") // strip parentheses + content
@@ -36,10 +29,7 @@ export function toMsiSlug(candidate: string): string {
     .replace(/^-|-$/g, ""); // trim leading/trailing dashes
 }
 
-/**
- * Internal JSON API that MSI support pages use to load BIOS entries.
- * Shape: { result: { downloads: { "AMI BIOS": [{ download_url, download_version, download_release }] } } }
- */
+/** read BIOS entries from MSI's support API */
 async function fetchViaMsiApi(slug: string): Promise<FetchResult> {
   const apiUrl = `${MSI_BASE}/api/v1/product/support/panel?product=${encodeURIComponent(slug)}&type=bios`;
   try {
@@ -51,30 +41,34 @@ async function fetchViaMsiApi(slug: string): Promise<FetchResult> {
       },
     });
     if (!res.ok) return { ok: false, reason: `MSI API returned ${res.status}` };
-    const data = (await res.json()) as any;
+    const data: unknown = await res.json();
+    if (!isRecord(data)) {
+      return { ok: false, reason: "MSI API returned an invalid response" };
+    }
 
-    // Real shape: result.downloads["AMI BIOS"] | result.downloads["BIOS"] | ...
-    const downloadsObj = data?.result?.downloads;
-    let items: any[] = [];
+    // use the current downloads object when present
+    const result = data.result;
+    const downloadsObj = isRecord(result) ? result.downloads : undefined;
+    let items: Record<string, unknown>[] = [];
 
-    if (downloadsObj && typeof downloadsObj === "object" && !Array.isArray(downloadsObj)) {
-      // Prefer AMI BIOS, then any other key that looks like BIOS
+    if (isRecord(downloadsObj)) {
+      // prefer AMI BIOS, then another non-empty BIOS list
       const preferred =
         downloadsObj["AMI BIOS"] ??
         downloadsObj["BIOS"] ??
-        Object.values(downloadsObj).find((v) => Array.isArray(v) && v.length > 0);
-      items = Array.isArray(preferred) ? preferred : [];
+        Object.values(downloadsObj).find((value) => Array.isArray(value) && value.length > 0);
+      items = Array.isArray(preferred) ? preferred.filter(isRecord) : [];
     } else {
-      // Older/alternate shapes
-      items = data?.result ?? data?.data ?? data?.bios ?? data?.files ?? [];
-      if (!Array.isArray(items)) items = [];
+      // support older response formats
+      const fallback = data.result ?? data.data ?? data.bios ?? data.files;
+      items = Array.isArray(fallback) ? fallback.filter(isRecord) : [];
     }
 
     if (items.length === 0) {
       return { ok: false, reason: "MSI API returned empty BIOS list" };
     }
 
-    // Sort by release date descending; MSI usually already returns newest first
+    // sort by release date, newest first
     const sorted = [...items].sort((a, b) => {
       const da = a.download_release ?? a.releaseDate ?? a.date ?? "";
       const db = b.download_release ?? b.releaseDate ?? b.date ?? "";
@@ -82,9 +76,13 @@ async function fetchViaMsiApi(slug: string): Promise<FetchResult> {
     });
 
     const latest = sorted[0];
-    const downloadUrl: string =
-      latest.download_url ?? latest.downloadUrl ?? latest.url ?? latest.link ?? "";
-    const version: string = String(
+    const downloadUrl = [
+      latest.download_url,
+      latest.downloadUrl,
+      latest.url,
+      latest.link,
+    ].find((value): value is string => typeof value === "string") ?? "";
+    const version = String(
       latest.download_version ?? latest.version ?? latest.ver ?? "unknown"
     );
 
@@ -98,10 +96,7 @@ async function fetchViaMsiApi(slug: string): Promise<FetchResult> {
   }
 }
 
-/**
- * Fallback: scrape the MSI support page HTML for download.msi.com links ending in .zip.
- * Note: MSI often loads BIOS via JS/API, so this is a last resort.
- */
+/** scrape the support page if the API has no BIOS entry */
 async function fetchViaScrape(slug: string): Promise<FetchResult> {
   const pageUrl = `${MSI_BASE}/Motherboard/${slug}/support`;
   try {
@@ -136,10 +131,7 @@ async function fetchViaScrape(slug: string): Promise<FetchResult> {
   }
 }
 
-/**
- * Validate that a board exists on MSI's site by GETting the support page.
- * HEAD alone can fail; MSI also 403s non-browser User-Agents.
- */
+/** check that the board support page exists */
 export async function validateMsiBoard(slug: string): Promise<boolean> {
   try {
     const res = await fetch(`${MSI_BASE}/Motherboard/${slug}/support`, {
@@ -153,9 +145,7 @@ export async function validateMsiBoard(slug: string): Promise<boolean> {
   }
 }
 
-/**
- * Main entry point: given a board candidate string, return the latest BIOS entry.
- */
+/** find the latest BIOS for a board */
 export async function fetchMsiBios(candidate: string): Promise<FetchResult> {
   const slug = toMsiSlug(candidate);
   if (!slug) return { ok: false, reason: "Could not derive MSI slug from candidate" };

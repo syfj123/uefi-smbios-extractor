@@ -1,21 +1,20 @@
-/**
- * Manual single-file dump utility.
+/*
+ * run extractor.exe on a local firmware file
  *
- * Usage:
+ * usage:
  *   node manual-dump.mjs <firmware-file> [candidate-name]
  *
- * Examples:
+ * examples:
  *   node manual-dump.mjs E7D98IMS.BI0
  *   node manual-dump.mjs ./tmp/E7D98IMS.BI0 "MSI MAG B550M MORTAR"
  *
- * - <firmware-file>   Path to the firmware file on disk (required).
- * - [candidate-name]  Board name shown with the local result (optional).
- *                     Defaults to the filename without extension.
+ * - <firmware-file>: firmware file path
+ * - [candidate-name]: optional board name; defaults to the filename
  *
- * Env vars (from .env or shell):
- *   WINE_EXEC            Path to wine binary (default: wine)
- *   WINEPREFIX           Wine prefix directory (default: .wine-joony next to this file)
- *   WINEARCH             Wine architecture (default: win64)
+ * environment variables:
+ *   WINE_EXEC            path to wine binary
+ *   WINEPREFIX           wine prefix directory
+ *   WINEARCH             wine architecture
  */
 
 import "dotenv/config";
@@ -27,26 +26,18 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// ---------------------------------------------------------------------------
-// Config
-// ---------------------------------------------------------------------------
-
 const IS_WINE = process.platform !== "win32";
 const WINE_EXEC = process.env.WINE_EXEC ?? "wine";
 const WINE_PREFIX = process.env.WINEPREFIX ?? path.join(__dirname, ".wine-joony");
 
-function resolveJoonyExe() {
-  const local = path.join(__dirname, "JOONY.exe");
+function resolveExtractorExe() {
+  const local = path.join(__dirname, "extractor.exe");
   if (existsSync(local)) return local;
-  return path.resolve(__dirname, "../smbiosauto/JOONY.exe");
+  return path.resolve(__dirname, "../smbiosauto/extractor.exe");
 }
-const JOONY_EXE = resolveJoonyExe();
+const EXTRACTOR_EXE = resolveExtractorExe();
 
 const TMP_DIR = path.join(__dirname, "tmp");
-
-// ---------------------------------------------------------------------------
-// CLI args
-// ---------------------------------------------------------------------------
 
 const [, , rawFilePath, rawCandidate] = process.argv;
 
@@ -61,11 +52,7 @@ const firmwareInput = path.resolve(rawFilePath);
 const fileBasename = path.basename(firmwareInput);
 const candidate = (rawCandidate ?? path.parse(fileBasename).name).trim();
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Convert an absolute Linux path to a Wine Z: drive path. */
+/** convert an absolute Linux path to Wine's Z: drive path */
 function toWinePath(linuxPath) {
   return "Z:" + linuxPath.replace(/\//g, "\\");
 }
@@ -74,7 +61,7 @@ function ensureTmpDir() {
   if (!existsSync(TMP_DIR)) mkdirSync(TMP_DIR, { recursive: true });
 }
 
-/** Copy firmware into tmp so we run JOONY.exe from a clean directory. */
+/** stage the firmware in tmp */
 function stageFirmware() {
   ensureTmpDir();
   const dest = path.join(TMP_DIR, fileBasename);
@@ -82,21 +69,21 @@ function stageFirmware() {
   return dest;
 }
 
-/** Spawn JOONY.exe (via Wine on Linux) and return the JSON result. */
-function spawnJoony(firmwarePath) {
+/** run extractor.exe and return its JSON result */
+function spawnExtractor(firmwarePath) {
   return new Promise((resolve, reject) => {
-    if (!existsSync(JOONY_EXE)) {
-      reject(new Error(`JOONY.exe not found at: ${JOONY_EXE}`));
+    if (!existsSync(EXTRACTOR_EXE)) {
+      reject(new Error(`extractor.exe not found at: ${EXTRACTOR_EXE}`));
       return;
     }
 
-    const joonyArg = IS_WINE ? toWinePath(firmwarePath) : firmwarePath;
+    const extractorArg = IS_WINE ? toWinePath(firmwarePath) : firmwarePath;
     const [cmd, args] = IS_WINE
-      ? [WINE_EXEC, [JOONY_EXE, joonyArg]]
-      : [JOONY_EXE, [joonyArg]];
+      ? [WINE_EXEC, [EXTRACTOR_EXE, extractorArg]]
+      : [EXTRACTOR_EXE, [extractorArg]];
 
     console.log(
-      `[manual-dump] Spawning: ${IS_WINE ? "wine " : ""}JOONY.exe ${fileBasename}` +
+      `[manual-dump] Spawning: ${IS_WINE ? "wine " : ""}extractor.exe ${fileBasename}` +
         (IS_WINE ? ` (prefix: ${WINE_PREFIX})` : ""),
     );
 
@@ -117,31 +104,35 @@ function spawnJoony(firmwarePath) {
     });
 
     let lastJsonResult = null;
+    let stdoutBuffer = "";
+
+    const parseJsonLine = (line) => {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("{")) return;
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed === "object") lastJsonResult = parsed;
+      } catch {
+        // ignore non-JSON output
+      }
+    };
 
     proc.stdout.on("data", (d) => {
       const text = d.toString();
-      process.stdout.write(`[JOONY] ${text}`);
-      for (const line of text.split("\n")) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith("{")) continue;
-        try {
-          const parsed = JSON.parse(trimmed);
-          if (parsed && typeof parsed === "object") lastJsonResult = parsed;
-        } catch {
-          // not JSON
-        }
-      }
+      process.stdout.write(`[extractor] ${text}`);
+      const lines = (stdoutBuffer + text).split(/\r?\n/);
+      stdoutBuffer = lines.pop() ?? "";
+      for (const line of lines) parseJsonLine(line);
     });
 
-    proc.stderr.on("data", (d) => process.stderr.write(`[JOONY:err] ${d.toString()}`));
-    proc.on("close", (code) => resolve({ exitCode: code ?? 0, jsonResult: lastJsonResult }));
+    proc.stderr.on("data", (d) => process.stderr.write(`[extractor:err] ${d.toString()}`));
+    proc.on("close", (code) => {
+      parseJsonLine(stdoutBuffer);
+      resolve({ exitCode: code ?? 1, jsonResult: lastJsonResult });
+    });
     proc.on("error", reject);
   });
 }
-
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
 
 async function main() {
   console.log(`[manual-dump] File:      ${firmwareInput}`);
@@ -153,7 +144,7 @@ async function main() {
     process.exit(1);
   }
 
-  // Stage firmware into tmp so JOONY.exe has a predictable working directory.
+  // run extractor.exe from a clean working directory
   const stagedPath = stageFirmware();
   console.log(`[manual-dump] Staged to: ${stagedPath}`);
 
@@ -161,23 +152,23 @@ async function main() {
   let jsonResult = null;
 
   try {
-    ({ exitCode, jsonResult } = await spawnJoony(stagedPath));
-    console.log(`\n[manual-dump] JOONY.exe exited with code ${exitCode}`);
+    ({ exitCode, jsonResult } = await spawnExtractor(stagedPath));
+    console.log(`\n[manual-dump] extractor.exe exited with code ${exitCode}`);
   } finally {
-    // Clean up staged copy regardless of outcome.
+    // remove the staged copy
     try {
       if (existsSync(stagedPath)) rmSync(stagedPath, { force: true });
     } catch {
-      // non-fatal
+      // continue if cleanup fails
     }
   }
 
   if (!jsonResult || jsonResult.ok === false) {
-    console.error("[manual-dump] JOONY.exe produced no usable JSON output.");
+    console.error("[manual-dump] extractor.exe produced no usable JSON output.");
     process.exit(exitCode === 0 ? 1 : exitCode);
   }
 
-  console.log("[manual-dump] JOONY JSON result:");
+  console.log("[manual-dump] extractor JSON result:");
   console.log(JSON.stringify(jsonResult, null, 2));
   console.log("\n[manual-dump] Done.");
 }

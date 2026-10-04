@@ -1,21 +1,4 @@
-/**
- * Gigabyte BIOS fetcher.
- *
- * Newer Gigabyte BIOS zips use a product-code midsegment that cannot be
- * guessed:
- *   mb_bios_{slug}_{productCode}_{version}.zip
- *   e.g. mb_bios_x870-aorus-infinity_8agnr018_f2b.zip
- *
- * Older boards still use the simple form:
- *   mb_bios_{slug}_{version}.zip
- *
- * Strategy:
- *   1. Derive a product-page slug from the candidate.
- *   2. Fetch the Motherboard support page (SSR embeds BIOS CDN links).
- *   3. Parse the newest BIOS zip URL from the HTML.
- *   4. Fall back to a simple CDN version scan for older boards that still
- *      use the mb_bios_{slug}_{ver}.zip pattern.
- */
+/** fetch the latest Gigabyte BIOS entry */
 
 import type { BiosEntry, FetchResult } from "../types.js";
 
@@ -32,13 +15,7 @@ const HEADERS: Record<string, string> = {
   Referer: "https://www.gigabyte.com/",
 };
 
-/**
- * Convert a board candidate to a Gigabyte slug (lowercase, dash-separated).
- * Examples:
- *   "B450M DS3H"            → "b450m-ds3h"
- *   "X870 AORUS INFINITY"   → "x870-aorus-infinity"
- *   "X570 Gaming X (rev. 1.0)" → "x570-gaming-x"
- */
+/** convert a board name to a lowercase Gigabyte URL slug */
 export function toGigabyteSlug(candidate: string): string {
   return candidate
     .replace(/\([^)]*\)/g, "")        // complete parentheticals: (Rev. 1.0)
@@ -51,7 +28,7 @@ export function toGigabyteSlug(candidate: string): string {
     .replace(/^-|-$/g, "");
 }
 
-/** Product-page slug — Gigabyte URLs use UPPERCASE segments. */
+/** convert the slug to Gigabyte's uppercase page format */
 function toPageSlug(slug: string): string {
   return slug.toUpperCase();
 }
@@ -63,16 +40,13 @@ function stripQuery(url: string): string {
 function entryFromUrl(downloadUrl: string): BiosEntry {
   const clean = stripQuery(downloadUrl);
   const fileName = clean.split("/").pop() ?? "gigabyte-bios.zip";
-  // Prefer version token after the last underscore: ..._f2b.zip / ..._f64.zip
+  // read the version suffix, such as f2b or f64
   const verMatch = fileName.match(/_([fF]\d+[a-zA-Z]?)\.zip$/i);
   const version = verMatch?.[1]?.toUpperCase() ?? "unknown";
   return { version, downloadUrl: clean, fileName };
 }
 
-/**
- * Parse BIOS CDN links from a Gigabyte support page HTML body.
- * Page order is newest-first.
- */
+/** read the newest BIOS zip link from the support page */
 function parseBiosFromHtml(html: string): BiosEntry | null {
   const links = [
     ...html.matchAll(
@@ -101,7 +75,7 @@ async function fetchSupportPage(slug: string): Promise<BiosEntry | null> {
       const entry = parseBiosFromHtml(html);
       if (entry) return entry;
     } catch {
-      // try next URL
+      // try the next support URL
     }
   }
   return null;
@@ -120,7 +94,7 @@ async function exists(url: string): Promise<boolean> {
   }
 }
 
-/** Fallback for older boards: mb_bios_{slug}_{ver}.zip */
+/** scan the CDN for older BIOS filename formats */
 async function scanSimpleCdn(slug: string): Promise<BiosEntry | null> {
   const candidates: string[] = [];
   for (let n = VERSION_CEILING; n >= 1; n--) {
@@ -142,16 +116,14 @@ async function scanSimpleCdn(slug: string): Promise<BiosEntry | null> {
   return null;
 }
 
-/**
- * Main entry point: given a board candidate string, return the latest BIOS entry.
- */
+/** find the latest BIOS for a board */
 export async function fetchGigabyteBios(candidate: string): Promise<FetchResult> {
   const slug = toGigabyteSlug(candidate);
   if (!slug) {
     return { ok: false, reason: "Could not derive Gigabyte slug from candidate" };
   }
 
-  // Prefer support-page scrape (handles product-code midsegment on new boards)
+  // use the support page first for newer filename formats
   const fromPage = await fetchSupportPage(slug);
   if (fromPage) return { ok: true, entry: fromPage };
 

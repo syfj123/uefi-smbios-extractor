@@ -1,7 +1,7 @@
 {
   "name": "autodump",
   "version": "1.0.0",
-  "description": "Standalone BIOS autodump listener — fetches latest BIOS from MSI/ASUS and runs JOONY.exe",
+  "description": "Standalone BIOS autodump listener — fetches the latest BIOS from supported manufacturers and runs extractor.exe",
   "main": "dist/server.js",
   "type": "module",
   "scripts": {

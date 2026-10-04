@@ -1,7 +1,4 @@
-/**
- * Runner: download BIOS zip → extract firmware file → spawn JOONY.exe
- *         → print JOONY's JSON result locally
- */
+/** downloads BIOS, runs extractor.exe, and prints its JSON result */
 import AdmZip from "adm-zip";
 import chalk from "chalk";
 import { spawn } from "child_process";
@@ -11,35 +8,26 @@ import path from "path";
 import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-// __dirname is Autodump/dist at runtime → Autodump root is one level up
+// resolve the project root from dist/
 const AUTODUMP_ROOT = path.resolve(__dirname, "..");
 const TMP_DIR = path.join(AUTODUMP_ROOT, "tmp");
-/** Prefer JOONY.exe next to Autodump; fall back to ../smbiosauto for local Windows layouts. */
-function resolveJoonyExe() {
-    const local = path.join(AUTODUMP_ROOT, "JOONY.exe");
+/** find extractor.exe beside the project or in the legacy sibling folder */
+function resolveExtractorExe() {
+    const local = path.join(AUTODUMP_ROOT, "extractor.exe");
     if (existsSync(local))
         return local;
-    return path.resolve(AUTODUMP_ROOT, "../smbiosauto/JOONY.exe");
+    return path.resolve(AUTODUMP_ROOT, "../smbiosauto/extractor.exe");
 }
-const JOONY_EXE = resolveJoonyExe();
-/**
- * Whether to wrap JOONY.exe in Wine.
- * Auto-detected: true on any non-Windows host.
- * Override via WINE_EXEC env var (path to wine binary, defaults to "wine").
- * WINEPREFIX defaults to Autodump/.wine-joony (override with WINEPREFIX=).
- */
+const EXTRACTOR_EXE = resolveExtractorExe();
+// use Wine off Windows; WINE_EXEC and WINEPREFIX can override its defaults
 const IS_WINE = process.platform !== "win32";
 const WINE_EXEC = process.env.WINE_EXEC ?? "wine";
 const WINE_PREFIX = process.env.WINEPREFIX || path.join(AUTODUMP_ROOT, ".wine-joony");
-/**
- * Convert an absolute Linux path to a Wine Z: drive path.
- * Wine maps the host root (/) to Z:\ by default.
- * e.g. /home/user/tmp/bios.ROM → Z:\home\user\tmp\bios.ROM
- */
+/** convert an absolute Linux path to Wine's Z: drive path */
 function toWinePath(linuxPath) {
     return "Z:" + linuxPath.replace(/\//g, "\\");
 }
-/** File extensions that are valid BIOS firmware images. */
+/** bios firmware extensions */
 const FIRMWARE_EXTS = new Set([
     "ROM", "CAP", "BIN", "FD", "WPH", "BIO",
 ]);
@@ -51,7 +39,7 @@ function isFirmwareFile(name) {
         return false;
     if (FIRMWARE_EXTS.has(ext))
         return true;
-    // MSI-style versioned extension: 2-4 uppercase letters/digits (e.g. A90, H60, 190)
+    // accept MSI-style version extensions such as A90 and H60
     if (/^[A-Z0-9]{2,4}$/.test(ext))
         return true;
     return false;
@@ -90,20 +78,19 @@ async function downloadFile(url, destPath) {
     const buffer = Buffer.from(await res.arrayBuffer());
     await writeFile(destPath, buffer);
 }
-function spawnJoony(firmwarePath) {
+function spawnExtractor(firmwarePath) {
     return new Promise((resolve, reject) => {
-        if (!existsSync(JOONY_EXE)) {
-            reject(new Error(`JOONY.exe not found at: ${JOONY_EXE}`));
+        if (!existsSync(EXTRACTOR_EXE)) {
+            reject(new Error(`extractor.exe not found at: ${EXTRACTOR_EXE}`));
             return;
         }
         const fileName = path.basename(firmwarePath);
-        // On Linux we run: wine /abs/path/JOONY.exe Z:\abs\path\firmware.ROM
-        // On Windows we run: /abs/path/JOONY.exe /abs/path/firmware.ROM
-        const joonyArg = IS_WINE ? toWinePath(firmwarePath) : firmwarePath;
+        // wine needs a Z: path; Windows uses the native firmware path
+        const extractorArg = IS_WINE ? toWinePath(firmwarePath) : firmwarePath;
         const [cmd, args] = IS_WINE
-            ? [WINE_EXEC, [JOONY_EXE, joonyArg]]
-            : [JOONY_EXE, [joonyArg]];
-        console.log(chalk.cyan(`[Runner] Spawning: ${IS_WINE ? `wine ` : ""}JOONY.exe ${fileName}` +
+            ? [WINE_EXEC, [EXTRACTOR_EXE, extractorArg]]
+            : [EXTRACTOR_EXE, [extractorArg]];
+        console.log(chalk.cyan(`[Runner] Spawning: ${IS_WINE ? `wine ` : ""}extractor.exe ${fileName}` +
             (IS_WINE ? ` (prefix: ${WINE_PREFIX})` : "")));
         const proc = spawn(cmd, args, {
             cwd: path.dirname(firmwarePath),
@@ -114,62 +101,63 @@ function spawnJoony(firmwarePath) {
                     ? {
                         WINEPREFIX: WINE_PREFIX,
                         WINEARCH: process.env.WINEARCH || "win64",
-                        // Suppress Wine debug noise unless caller explicitly sets WINEDEBUG
+                        // suppress Wine logs unless WINEDEBUG is set
                         ...(process.env.WINEDEBUG ? {} : { WINEDEBUG: "-all" }),
                     }
                     : {}),
             },
-            // windowsHide is Windows-only; omit on Linux to avoid spawn errors
+            // windowsHide is only supported on Windows
             ...(IS_WINE ? {} : { windowsHide: true }),
         });
         let lastJsonResult = null;
-        proc.stdout.on("data", (d) => {
-            const text = d.toString();
-            process.stdout.write(chalk.gray(`[JOONY] ${text}`));
-            // Scan each line for the JSON result payload
-            for (const line of text.split("\n")) {
-                const trimmed = line.trim();
-                if (!trimmed.startsWith("{"))
-                    continue;
-                try {
-                    const parsed = JSON.parse(trimmed);
-                    if (parsed && typeof parsed === "object") {
-                        lastJsonResult = parsed;
-                    }
-                }
-                catch {
-                    // not JSON, ignore
+        let stdoutBuffer = "";
+        const parseJsonLine = (line) => {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith("{"))
+                return;
+            try {
+                const parsed = JSON.parse(trimmed);
+                if (parsed && typeof parsed === "object") {
+                    lastJsonResult = parsed;
                 }
             }
+            catch {
+                // ignore non-JSON output
+            }
+        };
+        proc.stdout.on("data", (d) => {
+            const text = d.toString();
+            process.stdout.write(chalk.gray(`[extractor] ${text}`));
+            const lines = (stdoutBuffer + text).split(/\r?\n/);
+            stdoutBuffer = lines.pop() ?? "";
+            for (const line of lines)
+                parseJsonLine(line);
         });
-        proc.stderr.on("data", (d) => process.stderr.write(chalk.yellow(`[JOONY:err] ${d.toString()}`)));
-        proc.on("close", (code) => resolve({ exitCode: code ?? 0, jsonResult: lastJsonResult }));
+        proc.stderr.on("data", (d) => process.stderr.write(chalk.yellow(`[extractor:err] ${d.toString()}`)));
+        proc.on("close", (code) => {
+            parseJsonLine(stdoutBuffer);
+            resolve({ exitCode: code ?? 1, jsonResult: lastJsonResult });
+        });
         proc.on("error", reject);
     });
 }
-/**
- * POST the AMIDE template to the backend API to save it in smbios_amide_templates.
- */
-/**
- * Full pipeline: download zip → extract firmware → run JOONY.exe →
- *                print the result locally → cleanup.
- */
+/** download BIOS, run extractor.exe, print its result, and clean up */
 export async function runDump(board, entry) {
     ensureTmpDir();
     const safePrefix = board.replace(/[^A-Za-z0-9\-_]/g, "_").slice(0, 40);
     const zipPath = path.join(TMP_DIR, `${safePrefix}-bios.zip`);
     const extractDir = path.join(TMP_DIR, `${safePrefix}-extracted`);
     try {
-        // 1. Download
+        // download the BIOS archive
         console.log(chalk.blue(`[Runner] Downloading BIOS zip: ${entry.downloadUrl}`));
         await downloadFile(entry.downloadUrl, zipPath);
         console.log(chalk.green(`[Runner] Download complete: ${entry.fileName} (v${entry.version})`));
-        // 2. Extract
+        // extract the archive
         if (!existsSync(extractDir))
             mkdirSync(extractDir, { recursive: true });
         const zip = new AdmZip(zipPath);
         zip.extractAllTo(extractDir, true);
-        // 3. Find firmware file
+        // find the firmware image
         const entries = zip.getEntries();
         const firmwareEntry = entries.find((e) => !e.isDirectory && isFirmwareFile(e.name));
         if (!firmwareEntry) {
@@ -178,19 +166,19 @@ export async function runDump(board, entry) {
         }
         const firmwarePath = path.join(extractDir, firmwareEntry.entryName);
         console.log(chalk.green(`[Runner] Found firmware: ${firmwareEntry.name}`));
-        // 4. Spawn JOONY.exe, capture JSON result
-        const { exitCode, jsonResult } = await spawnJoony(firmwarePath);
-        console.log(chalk.green(`[Runner] JOONY.exe exited with code ${exitCode}`));
-        // 5. Show JOONY's output in the local demo console instead of persisting it remotely.
+        // run extractor.exe and capture its JSON output
+        const { exitCode, jsonResult } = await spawnExtractor(firmwarePath);
+        console.log(chalk.green(`[Runner] extractor.exe exited with code ${exitCode}`));
+        // print the result locally
         if (jsonResult) {
-            console.log(chalk.cyan("[Runner] JOONY JSON result:"));
+            console.log(chalk.cyan("[Runner] extractor JSON result:"));
             console.log(JSON.stringify(jsonResult, null, 2));
         }
         else if (exitCode === 0) {
-            console.warn(chalk.yellow("[Runner] JOONY.exe exited 0 but emitted no JSON result."));
+            console.warn(chalk.yellow("[Runner] extractor.exe exited 0 but emitted no JSON result."));
         }
         else {
-            console.error(chalk.red("[Runner] JOONY.exe did not produce a JSON result."));
+            console.error(chalk.red("[Runner] extractor.exe did not produce a JSON result."));
         }
         return {
             ok: exitCode === 0 && jsonResult?.ok !== false,
@@ -202,14 +190,14 @@ export async function runDump(board, entry) {
         return { ok: false, reason: err.message };
     }
     finally {
-        // 6. Cleanup tmp files regardless of outcome
+        // remove temporary files
         for (const p of [zipPath, extractDir]) {
             try {
                 if (existsSync(p))
                     rmSync(p, { recursive: true, force: true });
             }
             catch {
-                // non-fatal
+                // continue if cleanup fails
             }
         }
     }

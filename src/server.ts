@@ -13,10 +13,7 @@ app.use(express.json());
 const PORT = Number(process.env.AUTODUMP_PORT ?? 4567);
 const MANUFACTURERS = new Set(["MSI", "ASUS", "GIGABYTE"]);
 
-/* ── Serial queue ─────────────────────────────────────────────────────────────
- * All dump jobs run one at a time. Incoming requests are accepted immediately
- * (202) and appended to the queue. A single async loop drains them in order.
- */
+// run dump jobs one at a time and process queued requests in order
 const dumpQueue: DumpRequest[] = [];
 let queueRunning = false;
 
@@ -43,7 +40,7 @@ async function drainQueue(): Promise<void> {
   console.log(chalk.gray("[Queue] All jobs done."));
 }
 
-/* ── /health ── */
+// report API and queue status
 app.get("/health", (_req, res) => {
   res.json({
     ok: true,
@@ -52,7 +49,7 @@ app.get("/health", (_req, res) => {
   });
 });
 
-/* ── /dump ── */
+// validate and queue a dump request
 app.post("/dump", (req, res) => {
   const body: Partial<DumpRequest> =
     req.body && typeof req.body === "object" ? req.body : {};
@@ -93,7 +90,7 @@ async function processDump(req: DumpRequest): Promise<void> {
     chalk.blueBright(`\n[Autodump] Starting dump for: "${req.board}" (${req.manufacturer})`)
   );
 
-  // 1. Fetch BIOS entry from manufacturer
+  // fetch the BIOS entry
   let fetchResult;
   if (req.manufacturer === "MSI") {
     fetchResult = await fetchMsiBios(req.board);
@@ -116,7 +113,7 @@ async function processDump(req: DumpRequest): Promise<void> {
     chalk.green(`[Autodump] Found BIOS v${entry.version}: ${entry.downloadUrl}`)
   );
 
-  // 2. Download, extract, run JOONY.exe
+  // download, extract, and run extractor.exe
   const result = await runDump(req.board, entry);
 
   if (result.ok) {
@@ -139,8 +136,8 @@ app.listen(PORT, "127.0.0.1", () => {
   if (isWine) {
     const wineExec = process.env.WINE_EXEC ?? "wine";
     const winePrefix = process.env.WINEPREFIX || "Autodump/.wine-joony";
-    console.log(chalk.yellow(`  [Wine mode]  JOONY.exe via: ${wineExec}`));
+    console.log(chalk.yellow(`  [Wine mode]  extractor.exe via: ${wineExec}`));
     console.log(chalk.gray(`               WINEPREFIX=${winePrefix}`));
-    console.log(chalk.gray(`               JOONY.exe expected next to package.json`));
+    console.log(chalk.gray(`               extractor.exe expected next to package.json`));
   }
 });

@@ -1,25 +1,17 @@
-/**
- * MSI BIOS fetcher.
- *
- * Strategy:
- *   1. Derive a URL slug from the board candidate string.
- *   2. Validate the board exists by hitting the MSI support page.
- *   3. Try the internal JSON API first; fall back to HTML scraping if it fails.
- *   4. Return the latest BIOS zip URL + file name.
- */
+/** fetch the latest MSI BIOS entry */
 import { parse as parseHtml } from "node-html-parser";
 const MSI_BASE = "https://www.msi.com";
-/** MSI blocks bot-looking UAs with 403 — use a normal browser UA. */
+function isRecord(value) {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+/** use a browser user agent because MSI may block automated requests */
 const BROWSER_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
     Referer: "https://www.msi.com/",
 };
-/**
- * Convert a board candidate string to an MSI URL slug.
- * e.g. "B450M MORTAR MAX (MS-7B84)" → "B450M-MORTAR-MAX"
- */
+/** convert a board name to an MSI URL slug */
 export function toMsiSlug(candidate) {
     return candidate
         .replace(/\(.*?\)/g, "") // strip parentheses + content
@@ -29,10 +21,7 @@ export function toMsiSlug(candidate) {
         .replace(/-+/g, "-") // collapse consecutive dashes
         .replace(/^-|-$/g, ""); // trim leading/trailing dashes
 }
-/**
- * Internal JSON API that MSI support pages use to load BIOS entries.
- * Shape: { result: { downloads: { "AMI BIOS": [{ download_url, download_version, download_release }] } } }
- */
+/** read BIOS entries from MSI's support API */
 async function fetchViaMsiApi(slug) {
     const apiUrl = `${MSI_BASE}/api/v1/product/support/panel?product=${encodeURIComponent(slug)}&type=bios`;
     try {
@@ -45,34 +34,42 @@ async function fetchViaMsiApi(slug) {
         });
         if (!res.ok)
             return { ok: false, reason: `MSI API returned ${res.status}` };
-        const data = (await res.json());
-        // Real shape: result.downloads["AMI BIOS"] | result.downloads["BIOS"] | ...
-        const downloadsObj = data?.result?.downloads;
+        const data = await res.json();
+        if (!isRecord(data)) {
+            return { ok: false, reason: "MSI API returned an invalid response" };
+        }
+        // use the current downloads object when present
+        const result = data.result;
+        const downloadsObj = isRecord(result) ? result.downloads : undefined;
         let items = [];
-        if (downloadsObj && typeof downloadsObj === "object" && !Array.isArray(downloadsObj)) {
-            // Prefer AMI BIOS, then any other key that looks like BIOS
+        if (isRecord(downloadsObj)) {
+            // prefer AMI BIOS, then another non-empty BIOS list
             const preferred = downloadsObj["AMI BIOS"] ??
                 downloadsObj["BIOS"] ??
-                Object.values(downloadsObj).find((v) => Array.isArray(v) && v.length > 0);
-            items = Array.isArray(preferred) ? preferred : [];
+                Object.values(downloadsObj).find((value) => Array.isArray(value) && value.length > 0);
+            items = Array.isArray(preferred) ? preferred.filter(isRecord) : [];
         }
         else {
-            // Older/alternate shapes
-            items = data?.result ?? data?.data ?? data?.bios ?? data?.files ?? [];
-            if (!Array.isArray(items))
-                items = [];
+            // support older response formats
+            const fallback = data.result ?? data.data ?? data.bios ?? data.files;
+            items = Array.isArray(fallback) ? fallback.filter(isRecord) : [];
         }
         if (items.length === 0) {
             return { ok: false, reason: "MSI API returned empty BIOS list" };
         }
-        // Sort by release date descending; MSI usually already returns newest first
+        // sort by release date, newest first
         const sorted = [...items].sort((a, b) => {
             const da = a.download_release ?? a.releaseDate ?? a.date ?? "";
             const db = b.download_release ?? b.releaseDate ?? b.date ?? "";
             return String(db).localeCompare(String(da));
         });
         const latest = sorted[0];
-        const downloadUrl = latest.download_url ?? latest.downloadUrl ?? latest.url ?? latest.link ?? "";
+        const downloadUrl = [
+            latest.download_url,
+            latest.downloadUrl,
+            latest.url,
+            latest.link,
+        ].find((value) => typeof value === "string") ?? "";
         const version = String(latest.download_version ?? latest.version ?? latest.ver ?? "unknown");
         if (!downloadUrl)
             return { ok: false, reason: "No download URL in MSI API response" };
@@ -83,10 +80,7 @@ async function fetchViaMsiApi(slug) {
         return { ok: false, reason: `MSI API error: ${err.message}` };
     }
 }
-/**
- * Fallback: scrape the MSI support page HTML for download.msi.com links ending in .zip.
- * Note: MSI often loads BIOS via JS/API, so this is a last resort.
- */
+/** scrape the support page if the API has no BIOS entry */
 async function fetchViaScrape(slug) {
     const pageUrl = `${MSI_BASE}/Motherboard/${slug}/support`;
     try {
@@ -114,10 +108,7 @@ async function fetchViaScrape(slug) {
         return { ok: false, reason: `MSI scrape error: ${err.message}` };
     }
 }
-/**
- * Validate that a board exists on MSI's site by GETting the support page.
- * HEAD alone can fail; MSI also 403s non-browser User-Agents.
- */
+/** check that the board support page exists */
 export async function validateMsiBoard(slug) {
     try {
         const res = await fetch(`${MSI_BASE}/Motherboard/${slug}/support`, {
@@ -131,9 +122,7 @@ export async function validateMsiBoard(slug) {
         return false;
     }
 }
-/**
- * Main entry point: given a board candidate string, return the latest BIOS entry.
- */
+/** find the latest BIOS for a board */
 export async function fetchMsiBios(candidate) {
     const slug = toMsiSlug(candidate);
     if (!slug)

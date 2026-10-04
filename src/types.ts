@@ -1,14 +1,14 @@
 export interface DumpRequest {
-  /** Motherboard model to look up, e.g. "B450M MORTAR MAX" */
+  /** motherboard model, e.g. "B450M MORTAR MAX" */
   board: string;
-  /** "MSI" | "ASUS" | "GIGABYTE" */
+  /** supported manufacturer */
   manufacturer: string;
 }
 
 export interface BiosEntry {
   version: string;
   downloadUrl: string;
-  /** Filename inside the zip that JOONY.exe should receive */
+  /** firmware filename inside the zip */
   fileName: string;
 }
 
