@@ -3,8 +3,6 @@ export interface DumpRequest {
   candidate: string;
   /** "MSI" | "ASUS" | "GIGABYTE" */
   manufacturer: string;
-  /** Discord channel ID to send the completion message to */
-  channelId: string;
 }
 
 export interface BiosEntry {

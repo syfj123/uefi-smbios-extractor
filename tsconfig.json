@@ -12,7 +12,7 @@
     "sourceMap": true,
     "declaration": false,
     "downlevelIteration": true,
-    "ignoreDeprecations": "6.0",
+    "ignoreDeprecations": "5.0",
     "lib": ["ES2020"]
   },
   "include": ["src/**/*"],

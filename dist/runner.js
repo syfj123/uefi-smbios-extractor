@@ -1,6 +1,6 @@
 /**
  * Runner: download BIOS zip → extract firmware file → spawn JOONY.exe
- *         → parse JSON result → POST to backend API → notify Discord channel
+ *         → print JOONY's JSON result locally
  */
 import AdmZip from "adm-zip";
 import chalk from "chalk";
@@ -9,7 +9,6 @@ import { existsSync, mkdirSync, rmSync } from "fs";
 import { writeFile } from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
-import { BACKEND_URL, BOT_NOTIFY_PORT } from "./server.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 // __dirname is Autodump/dist at runtime → Autodump root is one level up
@@ -23,8 +22,6 @@ function resolveJoonyExe() {
     return path.resolve(AUTODUMP_ROOT, "../smbiosauto/JOONY.exe");
 }
 const JOONY_EXE = resolveJoonyExe();
-const SECRET = process.env.AUTODUMP_SECRET ?? "";
-const DUMP_WEBHOOK_URL = process.env.SMBIOS_DUMP_WEBHOOK_URL ?? "";
 /**
  * Whether to wrap JOONY.exe in Wine.
  * Auto-detected: true on any non-Windows host.
@@ -153,107 +150,11 @@ function spawnJoony(firmwarePath) {
 /**
  * POST the AMIDE template to the backend API to save it in smbios_amide_templates.
  */
-/** Returns true if the template was saved, false if it already existed or failed. */
-async function saveTemplateToBackend(candidate, template) {
-    const url = `${BACKEND_URL}/api/smbios/autodump`;
-    try {
-        const res = await fetch(url, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                ...(SECRET ? { "x-autodump-secret": SECRET } : {}),
-            },
-            body: JSON.stringify({ candidate, template }),
-        });
-        if (res.status === 409) {
-            console.log(chalk.gray(`[Runner] "${candidate}" already in DB — skipping notify`));
-            return false;
-        }
-        if (!res.ok) {
-            const body = await res.text().catch(() => "");
-            console.error(chalk.red(`[Runner] Backend save failed (${res.status}): ${body}`));
-            return false;
-        }
-        console.log(chalk.green(`[Runner] Template saved to DB for "${candidate}"`));
-        return true;
-    }
-    catch (err) {
-        console.error(chalk.red(`[Runner] Backend unreachable: ${err.message}`));
-        return false;
-    }
-}
-/**
- * POST a rich embed to the SMBIOS dump webhook channel for every successful save.
- */
-async function notifyDumpWebhook(candidate, channelId) {
-    if (!DUMP_WEBHOOK_URL)
-        return;
-    const fields = [
-        { name: "Board", value: `\`${candidate}\``, inline: true },
-        { name: "Status", value: "Template saved", inline: true },
-    ];
-    if (channelId) {
-        fields.push({ name: "Ticket", value: `<#${channelId}>`, inline: true });
-    }
-    const body = {
-        embeds: [
-            {
-                title: "New SMBIOS Dump",
-                color: 0xfa5020,
-                fields,
-                footer: { text: "JOONY | SOFTWARE · SMBIOS Autodump" },
-                timestamp: new Date().toISOString(),
-            },
-        ],
-    };
-    try {
-        const res = await fetch(DUMP_WEBHOOK_URL, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-        });
-        if (!res.ok) {
-            console.error(chalk.red(`[Runner] Dump webhook failed (${res.status})`));
-        }
-        else {
-            console.log(chalk.green(`[Runner] Dump webhook posted for "${candidate}"`));
-        }
-    }
-    catch (err) {
-        console.warn(chalk.yellow(`[Runner] Dump webhook unreachable: ${err.message}`));
-    }
-}
-/**
- * POST a notification to the ticket bot's internal /internal/notify endpoint
- * so it can send a wireframe embed into the Discord ticket channel.
- */
-async function notifyDiscord(payload) {
-    const url = `http://127.0.0.1:${BOT_NOTIFY_PORT}/internal/notify`;
-    try {
-        const res = await fetch(url, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                ...(SECRET ? { "x-autodump-secret": SECRET } : {}),
-            },
-            body: JSON.stringify(payload),
-        });
-        if (!res.ok) {
-            console.error(chalk.red(`[Runner] Discord notify failed (${res.status})`));
-        }
-        else {
-            console.log(chalk.green(`[Runner] Discord notified for channel ${payload.channelId}`));
-        }
-    }
-    catch (err) {
-        console.warn(chalk.yellow(`[Runner] Discord notify unreachable: ${err.message}`));
-    }
-}
 /**
  * Full pipeline: download zip → extract firmware → run JOONY.exe →
- *                save template → notify Discord channel → cleanup.
+ *                print the result locally → cleanup.
  */
-export async function runDump(candidate, channelId, entry) {
+export async function runDump(candidate, entry) {
     ensureTmpDir();
     const safePrefix = candidate.replace(/[^A-Za-z0-9\-_]/g, "_").slice(0, 40);
     const zipPath = path.join(TMP_DIR, `${safePrefix}-bios.zip`);
@@ -280,40 +181,24 @@ export async function runDump(candidate, channelId, entry) {
         // 4. Spawn JOONY.exe, capture JSON result
         const { exitCode, jsonResult } = await spawnJoony(firmwarePath);
         console.log(chalk.green(`[Runner] JOONY.exe exited with code ${exitCode}`));
-        // 5. Save template to DB (if JOONY.exe emitted a valid JSON result)
-        if (jsonResult && jsonResult.ok !== false) {
-            const saved = await saveTemplateToBackend(candidate, jsonResult);
-            if (saved) {
-                await Promise.all([
-                    notifyDiscord({ channelId, status: "complete", candidate }),
-                    notifyDumpWebhook(candidate, channelId),
-                ]);
-            }
+        // 5. Show JOONY's output in the local demo console instead of persisting it remotely.
+        if (jsonResult) {
+            console.log(chalk.cyan("[Runner] JOONY JSON result:"));
+            console.log(JSON.stringify(jsonResult, null, 2));
         }
         else if (exitCode === 0) {
-            // JOONY succeeded but no JSON emitted yet (pre-integration builds)
-            console.warn(chalk.yellow(`[Runner] JOONY.exe exited 0 but emitted no JSON — template not saved`));
-            await notifyDiscord({
-                channelId,
-                status: "partial",
-                candidate,
-            });
+            console.warn(chalk.yellow("[Runner] JOONY.exe exited 0 but emitted no JSON result."));
         }
         else {
-            await notifyDiscord({
-                channelId,
-                status: "failed",
-                candidate,
-            });
+            console.error(chalk.red("[Runner] JOONY.exe did not produce a JSON result."));
         }
-        return { ok: exitCode === 0, exitCode, firmwareFile: firmwareEntry.name };
+        return {
+            ok: exitCode === 0 && jsonResult?.ok !== false,
+            exitCode,
+            firmwareFile: firmwareEntry.name,
+        };
     }
     catch (err) {
-        await notifyDiscord({
-            channelId,
-            status: "error",
-            candidate,
-        }).catch(() => { });
         return { ok: false, reason: err.message };
     }
     finally {

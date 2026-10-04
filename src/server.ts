@@ -11,9 +11,7 @@ const app = express();
 app.use(express.json());
 
 const PORT = Number(process.env.AUTODUMP_PORT ?? 4567);
-const SECRET = process.env.AUTODUMP_SECRET ?? "";
-export const BACKEND_URL = (process.env.BACKEND_URL ?? "https://joonysoftware.xyz").replace(/\/$/, "");
-export const BOT_NOTIFY_PORT = Number(process.env.BOT_NOTIFY_PORT ?? 4568);
+const MANUFACTURERS = new Set(["MSI", "ASUS", "GIGABYTE"]);
 
 /* ── Serial queue ─────────────────────────────────────────────────────────────
  * All dump jobs run one at a time. Incoming requests are accepted immediately
@@ -56,12 +54,8 @@ app.get("/health", (_req, res) => {
 
 /* ── /dump ── */
 app.post("/dump", (req, res) => {
-  if (SECRET && req.headers["x-autodump-secret"] !== SECRET) {
-    res.status(401).json({ ok: false, reason: "Unauthorized" });
-    return;
-  }
-
-  const body = req.body as Partial<DumpRequest>;
+  const body: Partial<DumpRequest> =
+    req.body && typeof req.body === "object" ? req.body : {};
 
   if (!body.candidate || typeof body.candidate !== "string") {
     res.status(400).json({ ok: false, reason: "Missing or invalid 'candidate'" });
@@ -71,15 +65,23 @@ app.post("/dump", (req, res) => {
     res.status(400).json({ ok: false, reason: "Missing or invalid 'manufacturer'" });
     return;
   }
-  if (!body.channelId || typeof body.channelId !== "string") {
-    res.status(400).json({ ok: false, reason: "Missing or invalid 'channelId'" });
+  const candidate = body.candidate.trim();
+  const manufacturer = body.manufacturer.toUpperCase().trim();
+  if (!candidate) {
+    res.status(400).json({ ok: false, reason: "Missing or invalid 'candidate'" });
+    return;
+  }
+  if (!MANUFACTURERS.has(manufacturer)) {
+    res.status(400).json({
+      ok: false,
+      reason: "Unsupported manufacturer. Use MSI, ASUS, or GIGABYTE.",
+    });
     return;
   }
 
   const job: DumpRequest = {
-    candidate: body.candidate.trim(),
-    manufacturer: body.manufacturer.toUpperCase().trim(),
-    channelId: body.channelId.trim(),
+    candidate,
+    manufacturer,
   };
 
   enqueue(job);
@@ -115,7 +117,7 @@ async function processDump(req: DumpRequest): Promise<void> {
   );
 
   // 2. Download, extract, run JOONY.exe
-  const result = await runDump(req.candidate, req.channelId, entry);
+  const result = await runDump(req.candidate, entry);
 
   if (result.ok) {
     console.log(
