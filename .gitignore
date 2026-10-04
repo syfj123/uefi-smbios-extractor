@@ -2,7 +2,6 @@ node_modules/
 tmp/
 .wine-joony/
 .env
-dist/
 *.ROM
 *.CAP
 *.BIN
