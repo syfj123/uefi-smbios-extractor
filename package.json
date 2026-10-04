@@ -1,0 +1,27 @@
+{
+  "name": "autodump",
+  "version": "1.0.0",
+  "description": "Standalone BIOS autodump listener — fetches latest BIOS from MSI/ASUS and runs JOONY.exe",
+  "main": "dist/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "tsc && node -r dotenv/config ./dist/server.js",
+    "dev": "tsc --watch",
+    "build": "tsc"
+  },
+  "author": "JoonyWoony",
+  "license": "ISC",
+  "dependencies": {
+    "adm-zip": "^0.6.1",
+    "chalk": "^4.1.2",
+    "dotenv": "^16.0.3",
+    "express": "^4.21.2",
+    "node-html-parser": "^6.1.13"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.7",
+    "@types/express": "^5.0.3",
+    "@types/node": "^20.19.43",
+    "typescript": "^5.7.3"
+  }
+}
