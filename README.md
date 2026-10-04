@@ -46,6 +46,20 @@ To use a different port, set `AUTODUMP_PORT` in the environment or `.env` file.
 On Linux or macOS, set `WINE_EXEC` or `WINEPREFIX` if you need to override the
 default Wine settings.
 
+### `.env` example
+
+Create a `.env` file in the project root if you want to override defaults:
+
+```dotenv
+# local API port
+AUTODUMP_PORT=4567
+
+# only needed when running outside Windows
+WINE_EXEC=wine
+WINEPREFIX=.wine-joony
+WINEARCH=win64
+```
+
 ## Interactive demo
 
 With the API running, open a second terminal in the project folder and run:
