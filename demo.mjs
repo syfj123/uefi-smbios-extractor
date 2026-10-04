@@ -36,19 +36,19 @@ async function main() {
   console.log("=== SMBIOS Autodump Demo ===");
   console.log(`API: ${apiUrl}\n`);
 
-  const candidate = (await question("Motherboard model: ")).trim();
+  const board = (await question("Motherboard model: ")).trim();
   const manufacturer = (await question("Manufacturer (MSI/ASUS/GIGABYTE): "))
     .trim()
     .toUpperCase();
 
-  if (!candidate || !manufacturer) {
+  if (!board || !manufacturer) {
     throw new Error("Motherboard model and manufacturer are required.");
   }
 
   const response = await fetch(apiUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ candidate, manufacturer }),
+    body: JSON.stringify({ board, manufacturer }),
   });
   const responseText = await response.text();
   let data;

@@ -188,12 +188,12 @@ export interface RunResult {
  *                print the result locally → cleanup.
  */
 export async function runDump(
-  candidate: string,
+  board: string,
   entry: BiosEntry
 ): Promise<RunResult> {
   ensureTmpDir();
 
-  const safePrefix = candidate.replace(/[^A-Za-z0-9\-_]/g, "_").slice(0, 40);
+  const safePrefix = board.replace(/[^A-Za-z0-9\-_]/g, "_").slice(0, 40);
   const zipPath = path.join(TMP_DIR, `${safePrefix}-bios.zip`);
   const extractDir = path.join(TMP_DIR, `${safePrefix}-extracted`);
 

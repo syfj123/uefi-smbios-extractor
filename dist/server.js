@@ -17,7 +17,7 @@ const dumpQueue = [];
 let queueRunning = false;
 function enqueue(req) {
     dumpQueue.push(req);
-    console.log(chalk.gray(`[Queue] Enqueued "${req.candidate}" — queue length: ${dumpQueue.length}`));
+    console.log(chalk.gray(`[Queue] Enqueued "${req.board}" — queue length: ${dumpQueue.length}`));
     if (!queueRunning)
         drainQueue();
 }
@@ -48,18 +48,18 @@ app.get("/health", (_req, res) => {
 /* ── /dump ── */
 app.post("/dump", (req, res) => {
     const body = req.body && typeof req.body === "object" ? req.body : {};
-    if (!body.candidate || typeof body.candidate !== "string") {
-        res.status(400).json({ ok: false, reason: "Missing or invalid 'candidate'" });
+    if (!body.board || typeof body.board !== "string") {
+        res.status(400).json({ ok: false, reason: "Missing or invalid 'board'" });
         return;
     }
     if (!body.manufacturer || typeof body.manufacturer !== "string") {
         res.status(400).json({ ok: false, reason: "Missing or invalid 'manufacturer'" });
         return;
     }
-    const candidate = body.candidate.trim();
+    const board = body.board.trim();
     const manufacturer = body.manufacturer.toUpperCase().trim();
-    if (!candidate) {
-        res.status(400).json({ ok: false, reason: "Missing or invalid 'candidate'" });
+    if (!board) {
+        res.status(400).json({ ok: false, reason: "Missing or invalid 'board'" });
         return;
     }
     if (!MANUFACTURERS.has(manufacturer)) {
@@ -70,24 +70,24 @@ app.post("/dump", (req, res) => {
         return;
     }
     const job = {
-        candidate,
+        board,
         manufacturer,
     };
     enqueue(job);
-    res.status(202).json({ ok: true, queued: job.candidate, position: dumpQueue.length });
+    res.status(202).json({ ok: true, queued: job.board, position: dumpQueue.length });
 });
 async function processDump(req) {
-    console.log(chalk.blueBright(`\n[Autodump] Starting dump for: "${req.candidate}" (${req.manufacturer})`));
+    console.log(chalk.blueBright(`\n[Autodump] Starting dump for: "${req.board}" (${req.manufacturer})`));
     // 1. Fetch BIOS entry from manufacturer
     let fetchResult;
     if (req.manufacturer === "MSI") {
-        fetchResult = await fetchMsiBios(req.candidate);
+        fetchResult = await fetchMsiBios(req.board);
     }
     else if (req.manufacturer === "ASUS") {
-        fetchResult = await fetchAsusBios(req.candidate);
+        fetchResult = await fetchAsusBios(req.board);
     }
     else if (req.manufacturer === "GIGABYTE") {
-        fetchResult = await fetchGigabyteBios(req.candidate);
+        fetchResult = await fetchGigabyteBios(req.board);
     }
     else {
         console.warn(chalk.yellow(`[Autodump] Unsupported manufacturer: ${req.manufacturer}`));
@@ -100,7 +100,7 @@ async function processDump(req) {
     const { entry } = fetchResult;
     console.log(chalk.green(`[Autodump] Found BIOS v${entry.version}: ${entry.downloadUrl}`));
     // 2. Download, extract, run JOONY.exe
-    const result = await runDump(req.candidate, entry);
+    const result = await runDump(req.board, entry);
     if (result.ok) {
         console.log(chalk.greenBright(`[Autodump] Done! Firmware: ${result.firmwareFile} | Exit code: ${result.exitCode}`));
     }

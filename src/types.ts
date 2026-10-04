@@ -1,6 +1,6 @@
 export interface DumpRequest {
-  /** Raw detected phrase from the message, e.g. "B450M MORTAR MAX" */
-  candidate: string;
+  /** Motherboard model to look up, e.g. "B450M MORTAR MAX" */
+  board: string;
   /** "MSI" | "ASUS" | "GIGABYTE" */
   manufacturer: string;
 }

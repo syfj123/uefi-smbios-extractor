@@ -154,9 +154,9 @@ function spawnJoony(firmwarePath) {
  * Full pipeline: download zip → extract firmware → run JOONY.exe →
  *                print the result locally → cleanup.
  */
-export async function runDump(candidate, entry) {
+export async function runDump(board, entry) {
     ensureTmpDir();
-    const safePrefix = candidate.replace(/[^A-Za-z0-9\-_]/g, "_").slice(0, 40);
+    const safePrefix = board.replace(/[^A-Za-z0-9\-_]/g, "_").slice(0, 40);
     const zipPath = path.join(TMP_DIR, `${safePrefix}-bios.zip`);
     const extractDir = path.join(TMP_DIR, `${safePrefix}-extracted`);
     try {
