@@ -12,6 +12,27 @@ tools or when a prebuilt-system supplier has written system information that
 does not match the actual motherboard. Incorrect system information can cause
 hardware features such as fan control to stop working as expected.
 
+### Examples
+
+The screenshots below show incorrect SMBIOS board information and examples of
+corrected values.
+
+**ASUS board information before and after correction**
+
+| Before | After |
+| --- | --- |
+| ![ASUS baseboard information before correction](./docs/images/asus-before.png) | ![ASUS baseboard information after correction](./docs/images/asus-after.png) |
+
+**MSI extraction and system information examples**
+
+![Example firmware extraction output](./docs/images/msi-extractor-output.png)
+
+![Example Windows system information showing MSI board details](./docs/images/msi-system-information.png)
+
+**Example repair**
+
+![Before-and-after example of corrected motherboard SMBIOS values](./docs/images/repair-example.png)
+
 The tool extracts SMBIOS data to help with that repair process. It does not flash BIOS or change anything within the firmware of the motherboard, unless AMI tools such as AMIDEWINx64 are used to apply the values given in the output.
 
 > **Important:** The firmware image must use **AMI Aptio V**. Other BIOS
