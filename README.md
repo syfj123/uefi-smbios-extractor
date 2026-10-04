@@ -12,12 +12,10 @@ tools or when a prebuilt-system supplier has written system information that
 does not match the actual motherboard. Incorrect system information can cause
 hardware features such as fan control to stop working as expected.
 
-The tool extracts SMBIOS data to help with that repair process. It does not
-flash BIOS or change anything within the firmware of the motherboard, unless you yourself use AMI tools such as AMIDEWINx64 to apply the values given in the output.
+The tool extracts SMBIOS data to help with that repair process. It does not flash BIOS or change anything within the firmware of the motherboard, unless AMI tools such as AMIDEWINx64 are used to apply the values given in the output.
 
 > **Important:** The firmware image must use **AMI Aptio V**. Other BIOS
-> frameworks are not supported and will not work with `extractor.exe`. Verify
-> that the BIOS is for the exact motherboard model and revision before using it.
+> frameworks are not supported and will not work with `extractor.exe`.
 
 ## Requirements
 
