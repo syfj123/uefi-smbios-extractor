@@ -21,12 +21,29 @@ const BROWSER_HEADERS: Record<string, string> = {
 /** convert a board name to an MSI URL slug */
 export function toMsiSlug(candidate: string): string {
   return candidate
+    .replace(/^MSI[\s-]+/i, "")
     .replace(/\(.*?\)/g, "") // strip parentheses + content
     .trim()
     .replace(/\s+/g, "-") // spaces → dashes
     .replace(/[^A-Za-z0-9\-]/g, "") // drop anything else
     .replace(/-+/g, "-") // collapse consecutive dashes
     .replace(/^-|-$/g, ""); // trim leading/trailing dashes
+}
+
+/** Generate common MSI model-name variants without changing the board family. */
+export function msiSlugCandidates(candidate: string): string[] {
+  const base = toMsiSlug(candidate);
+  if (!base) return [];
+
+  const candidates = new Set([base]);
+  const withWifi = (slug: string) => (/-WIFI$/i.test(slug) ? slug : `${slug}-WIFI`);
+  const withoutMag = base.replace(/^MAG-/i, "");
+  const withMag = withoutMag.startsWith("MAG-") ? withoutMag : `MAG-${withoutMag}`;
+
+  candidates.add(withWifi(base));
+  candidates.add(withMag);
+  candidates.add(withWifi(withMag));
+  return [...candidates];
 }
 
 /** read BIOS entries from MSI's support API */
@@ -147,16 +164,38 @@ export async function validateMsiBoard(slug: string): Promise<boolean> {
 
 /** find the latest BIOS for a board */
 export async function fetchMsiBios(candidate: string): Promise<FetchResult> {
-  const slug = toMsiSlug(candidate);
-  if (!slug) return { ok: false, reason: "Could not derive MSI slug from candidate" };
+  const slugs = msiSlugCandidates(candidate);
+  if (slugs.length === 0) {
+    return { ok: false, reason: "Could not derive MSI slug from candidate" };
+  }
 
-  const exists = await validateMsiBoard(slug);
-  if (!exists) return { ok: false, reason: `Board not found on MSI site: "${slug}"` };
+  const failures: string[] = [];
+  for (const slug of slugs) {
+    const exists = await validateMsiBoard(slug);
+    if (!exists) {
+      failures.push(`Board not found: "${slug}"`);
+      continue;
+    }
 
-  const apiResult = await fetchViaMsiApi(slug);
-  if (apiResult.ok) return apiResult;
+    const apiResult = await fetchViaMsiApi(slug);
+    if (apiResult.ok === true) {
+      return slug === slugs[0]
+        ? apiResult
+        : { ...apiResult, entry: { ...apiResult.entry, matchedModel: slug } };
+    }
 
-  const failedApi = apiResult as { ok: false; reason: string };
-  console.warn(`[MSI] API failed (${failedApi.reason}), trying HTML scrape...`);
-  return fetchViaScrape(slug);
+    console.warn(`[MSI] API failed for "${slug}" (${apiResult.reason}), trying HTML scrape...`);
+    const scrapeResult = await fetchViaScrape(slug);
+    if (scrapeResult.ok === true) {
+      return slug === slugs[0]
+        ? scrapeResult
+        : { ...scrapeResult, entry: { ...scrapeResult.entry, matchedModel: slug } };
+    }
+    failures.push(`"${slug}": ${scrapeResult.reason}`);
+  }
+
+  return {
+    ok: false,
+    reason: `No official MSI BIOS found for "${candidate}". Tried: ${failures.join("; ")}`,
+  };
 }
