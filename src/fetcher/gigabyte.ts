@@ -18,14 +18,30 @@ const HEADERS: Record<string, string> = {
 /** convert a board name to a lowercase Gigabyte URL slug */
 export function toGigabyteSlug(candidate: string): string {
   return candidate
+    .replace(/^gigabyte(?:\s+technology)?[\s-]+/i, "")
+    .replace(/\brev(?:ision)?\.?\s*[\d.]+(?:\s*\/\s*[\d.]+)*/gi, "")
     .replace(/\([^)]*\)/g, "")        // complete parentheticals: (Rev. 1.0)
     .replace(/\s*\([^)]*$/, "")       // unclosed trailing fragment: (Rev.
-    .replace(/\brev\.?\s*[\d.x]+\b/gi, "")
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
+}
+
+function revisionSuffixes(candidate: string): string[] {
+  const match = candidate.match(
+    /\brev(?:ision)?\.?\s*([\d.]+(?:\s*\/\s*[\d.]+)*)/i
+  );
+  if (!match) return [];
+
+  return [...new Set(
+    (match[1] ?? "")
+      .split("/")
+      .map((revision) => revision.trim().replace(/\./g, ""))
+      .filter((revision) => /^\d+$/.test(revision))
+      .map((revision) => `rev-${revision}`)
+  )];
 }
 
 /** convert the slug to Gigabyte's uppercase page format */
@@ -59,12 +75,22 @@ function parseBiosFromHtml(html: string): BiosEntry | null {
   return entryFromUrl(unique[0]);
 }
 
-async function fetchSupportPage(slug: string): Promise<BiosEntry | null> {
+async function fetchSupportPage(
+  slug: string,
+  revisions: string[] = []
+): Promise<BiosEntry | null> {
   const pageSlug = toPageSlug(slug);
+  const revisionSlugs = revisions.map((revision) => `${pageSlug}-${revision}`);
   const urls = [
+    ...revisionSlugs.map((revisionSlug) =>
+      `https://www.gigabyte.com/Motherboard/${revisionSlug}/support`
+    ),
     `https://www.gigabyte.com/Motherboard/${pageSlug}/support`,
-    `https://www.gigabyte.com/Motherboard/${pageSlug}-rev-10/support`,
-    `https://www.gigabyte.com/Motherboard/${pageSlug}-rev-1x/support`,
+    ...["rev-10", "rev-11", "rev-12", "rev-1x"]
+      .filter((revision) => !revisions.includes(revision))
+      .map((revision) =>
+        `https://www.gigabyte.com/Motherboard/${pageSlug}-${revision}/support`
+      ),
   ];
 
   for (const url of urls) {
@@ -73,7 +99,12 @@ async function fetchSupportPage(slug: string): Promise<BiosEntry | null> {
       if (!res.ok) continue;
       const html = await res.text();
       const entry = parseBiosFromHtml(html);
-      if (entry) return entry;
+      if (entry) {
+        const routeModel = url.match(/\/Motherboard\/([^/]+)\/support/i)?.[1];
+        return routeModel && routeModel.toUpperCase() !== pageSlug
+          ? { ...entry, matchedModel: routeModel }
+          : entry;
+      }
     } catch {
       // try the next support URL
     }
@@ -124,7 +155,8 @@ export async function fetchGigabyteBios(candidate: string): Promise<FetchResult>
   }
 
   // use the support page first for newer filename formats
-  const fromPage = await fetchSupportPage(slug);
+  const revisions = revisionSuffixes(candidate);
+  const fromPage = await fetchSupportPage(slug, revisions);
   if (fromPage) return { ok: true, entry: fromPage };
 
   console.warn(
