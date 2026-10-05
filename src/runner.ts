@@ -187,6 +187,11 @@ export async function runDump(
 
   try {
     // download the BIOS archive
+    if (entry.matchedModel) {
+      console.log(
+        chalk.yellow(`[Runner] Official model fallback matched: "${entry.matchedModel}"`)
+      );
+    }
     console.log(chalk.blue(`[Runner] Downloading BIOS zip: ${entry.downloadUrl}`));
     await downloadFile(entry.downloadUrl, zipPath);
     console.log(chalk.green(`[Runner] Download complete: ${entry.fileName} (v${entry.version})`));
