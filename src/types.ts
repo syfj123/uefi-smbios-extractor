@@ -10,6 +10,8 @@ export interface BiosEntry {
   downloadUrl: string;
   /** firmware filename inside the zip */
   fileName: string;
+  /** official support-page model used when a fallback name was required */
+  matchedModel?: string;
 }
 
 export type FetchResult =
