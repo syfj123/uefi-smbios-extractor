@@ -19,8 +19,8 @@ corrected values.
 
 **ASUS board information before and after correction**
 
-| Before | After |
-| --- | --- |
+| Before                                                                         | After                                                                        |
+| ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
 | ![ASUS baseboard information before correction](./docs/images/asus-before.png) | ![ASUS baseboard information after correction](./docs/images/asus-after.png) |
 
 **MSI extraction and system information examples**
@@ -93,6 +93,8 @@ Enter the motherboard model and manufacturer when prompted. The demo sends a
 request to the local API and prints the response. The API terminal displays
 progress and the extracted JSON result.
 
+BIOS lookup includes limited manufacturer-specific fallbacks for common model name omissions. For example, MSI lookup can have a missing `MAG` prefix when inputting the motherboard model or `WIFI` suffix, and Gigabyte lookup can omit explicit revisions such as `Rev. 1.0/1.1/1.2`. A fallback is used only when the manufacturer support page provides a valid BIOS download; this is not an AI-powered general fuzzy search. Check the model reported in the API terminal to confirm it matches your exact board before using/applying the extracted information.
+
 ## API
 
 ### `GET /health`
@@ -147,5 +149,4 @@ requirement.
 
 ## Data handling
 
-This version prints extraction results locally. It does not send SMBIOS data to
-a backend, database, Discord channel, or webhook. For practical use, it may be added to do so (e.g. added to an HTML website where the user can search up their specific motherboard model, then apply the values outputted by the tool. However, they must have the prerequisite AMI tool (AMIDEWIN OR AMIDEEFI) to apply the values)
+This version prints extraction results locally. It does not send SMBIOS data to a backend, database, Discord channel, or webhook. For practical use, it may be added to do so (e.g. added to an HTML website where the user can search up their specific motherboard model, then apply the values outputted by the tool. However, they must have the prerequisite AMI tool (AMIDEWIN OR AMIDEEFI) to apply the values)
